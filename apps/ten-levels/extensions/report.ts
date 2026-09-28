@@ -8,16 +8,33 @@
  * `decide` is the one way an extension calls Jev: it validates, calls, reports, and returns.
  * `extra` must not use the keys the report already sets: source, state, questions, answers, usage, model, ms.
  */
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { JevClient } from "../src/core/client.ts";
 import { validateQuestions, type Answer, type Questions, type State } from "../src/core/types.ts";
 
+/** Outside the lab (no JEV_LEVEL_CONFIG) events go to a log file, not the pi TUI's stderr. */
+const IN_LAB = process.env.JEV_LEVEL_CONFIG !== undefined;
+const JEV_DIR = join(homedir(), ".config", "jev");
+const EVENT_LOG = join(JEV_DIR, "events.log");
+
+/** A pi started before the key was set still finds it in ~/.config/jev/openrouter-key. */
+function loadKey(): void {
+  if (process.env.OPENROUTER_API_KEY || process.env.TYPESAFE_API_KEY) return;
+  try {
+    const key = readFileSync(join(JEV_DIR, "openrouter-key"), "utf8").trim();
+    if (key) process.env.OPENROUTER_API_KEY = key;
+  } catch { /* no key file: the client reports the missing credential */ }
+}
+
 let client: JevClient | undefined;
-export const jev = () => (client ??= new JevClient({ provider: "openrouter" }));
+export const jev = () => (client ??= (loadKey(), new JevClient({ provider: "openrouter" })));
 
 /** The level config the lab passed in, JEV_LEVEL_CONFIG as JSON. */
 export function levelConfig<T extends object>(fallback: T): T {
   try {
-    const raw = process.env.JEV_LEVEL_CONFIG;
+    const raw = IN_LAB ? process.env.JEV_LEVEL_CONFIG : readFileSync(join(JEV_DIR, "config.json"), "utf8");
     return raw ? { ...fallback, ...(JSON.parse(raw) as Partial<T>) } : fallback;
   } catch {
     return fallback;
@@ -26,7 +43,9 @@ export function levelConfig<T extends object>(fallback: T): T {
 
 export function report(pi: any, kind: string, payload: Record<string, unknown>): void {
   const body = { kind, at: Date.now(), ...payload };
-  process.stderr.write("JEV_EVENT " + JSON.stringify(body) + "\n");
+  const line = "JEV_EVENT " + JSON.stringify(body) + "\n";
+  if (IN_LAB) process.stderr.write(line);
+  else try { mkdirSync(JEV_DIR, { recursive: true }); appendFileSync(EVENT_LOG, line); } catch { /* logging is optional */ }
   try { pi.appendEntry?.(`jev-${kind}`, payload); } catch { /* entries are optional */ }
 }
 
