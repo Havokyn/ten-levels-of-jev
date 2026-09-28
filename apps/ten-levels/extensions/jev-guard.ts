@@ -9,13 +9,22 @@
  * Load: pi -e extensions/jev-guard.ts --tools read,bash,edit,write
  */
 import { decide, levelConfig, report, touchesSecret } from "./report.ts";
+import { isAbsolute, resolve } from "node:path";
 import { BLOCK_NOTICE, gateBashCommand, gateWriteCall, screenToolResult } from "../src/levels/level06/index.ts";
+import { insideRepo } from "../src/levels/level06/write-gate.ts";
 
 type Option = "A" | "B" | "C";
 
+/** The write gate's repo: the cwd, or a configured root (worktrees live outside the launch dir). */
+export function pickWriteRoot(path: string, cwd: string, roots: string[]): string {
+  const target = isAbsolute(path) ? path : resolve(cwd, path);
+  return [cwd, ...roots].find((root) => insideRepo(target, root)) ?? cwd;
+}
+
 export default function (pi: any) {
-  const cfg = levelConfig<{ gates: Option[] }>({ gates: ["A", "B", "C"] });
+  const cfg = levelConfig<{ gates: Option[]; writeRoots: string[] }>({ gates: ["A", "B", "C"], writeRoots: [] });
   const on = (o: Option) => cfg.gates.includes(o);
+  const writeRoot = (path: string, cwd: string) => pickWriteRoot(path, cwd, cfg.writeRoots);
 
   pi.on("tool_call", async (event: any, ctx: any) => {
     if (touchesSecret(event.input)) { report(pi, "hook", { hook: "tool_call", tool: event.toolName, skipped: "secret" }); return; }
@@ -29,7 +38,7 @@ export default function (pi: any) {
       if ((event.toolName === "write" || event.toolName === "edit") && on("B")) {
         const path = String(event.input?.path ?? "");
         const content = String(event.input?.content ?? event.input?.newText ?? event.input?.new_string ?? "");
-        const d = await gateWriteCall(path, content, ctx.cwd, (s, q) => decide(pi, `tool_call ${event.toolName}`, s, q));
+        const d = await gateWriteCall(path, content, writeRoot(path, ctx.cwd),(s, q) => decide(pi, `tool_call ${event.toolName}`, s, q));
         report(pi, "hook", { hook: "tool_call", tool: event.toolName, path, block: d.block, reason: d.reason });
         if (d.block) return { block: true, reason: `jev-guard blocked this ${event.toolName}: ${d.reason}. ${BLOCK_NOTICE}` };
       }
