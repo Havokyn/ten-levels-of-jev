@@ -28,6 +28,10 @@ function loadKey(): void {
   } catch { /* no key file: the client reports the missing credential */ }
 }
 
+/** State touching these never goes to Jev or the event log: it may hold a credential. */
+export const SECRET = /\/etc\/tv-weex-trader|auth\.json|[\\/]\.ssh([\\/]|\b)|[\\/]\.config[\\/]jev|[\\/]Secrets([\\/]|\b)|[\\/]env\b|secret|credential|api[_-]?key|password|passwd|private[_-]?key|bearer |sk-or-|sk-ant-|ghp_|github_pat_|-----BEGIN/i;
+export const touchesSecret = (value: unknown): boolean => SECRET.test(JSON.stringify(value ?? {}));
+
 let client: JevClient | undefined;
 export const jev = () => (client ??= (loadKey(), new JevClient({ provider: "openrouter" })));
 
@@ -62,6 +66,7 @@ export interface Decision {
  */
 export async function decide(pi: any, source: string, state: State, questions: Questions, extra: Record<string, unknown> = {}): Promise<Decision> {
   validateQuestions(questions);
+  if (!IN_LAB && touchesSecret(state)) throw new Error("jev: state touches a secret, not sent");
   const started = performance.now();
   const result = await jev().systemOne(state, questions);
   const out: Decision = { answers: result.answers, usage: result.usage, model: result.model, ms: Math.round(performance.now() - started) };

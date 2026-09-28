@@ -8,7 +8,7 @@
  * Every decision is reported on the side channel so the lab window shows it as it happens.
  * Load: pi -e extensions/jev-guard.ts --tools read,bash,edit,write
  */
-import { decide, levelConfig, report } from "./report.ts";
+import { decide, levelConfig, report, touchesSecret } from "./report.ts";
 import { BLOCK_NOTICE, gateBashCommand, gateWriteCall, screenToolResult } from "../src/levels/level06/index.ts";
 
 type Option = "A" | "B" | "C";
@@ -18,6 +18,7 @@ export default function (pi: any) {
   const on = (o: Option) => cfg.gates.includes(o);
 
   pi.on("tool_call", async (event: any, ctx: any) => {
+    if (touchesSecret(event.input)) { report(pi, "hook", { hook: "tool_call", tool: event.toolName, skipped: "secret" }); return; }
     try {
       if (event.toolName === "bash" && on("A")) {
         const command = String(event.input?.command ?? "");
@@ -39,6 +40,7 @@ export default function (pi: any) {
 
   pi.on("tool_result", async (event: any) => {
     if (!on("C") || !(event.toolName === "read" || event.toolName === "bash")) return;
+    if (touchesSecret(event.input)) { report(pi, "hook", { hook: "tool_result", tool: event.toolName, skipped: "secret" }); return; }
     try {
       const text = Array.isArray(event.content) ? event.content.filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n") : "";
       const d = await screenToolResult(event.toolName, text, (s, q) => decide(pi, `tool_result ${event.toolName}`, s, q));
